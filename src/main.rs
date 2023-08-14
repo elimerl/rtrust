@@ -1,5 +1,6 @@
 use bytemuck::{Pod, Zeroable};
-use glam::Vec2;
+use encase::{ShaderType, UniformBuffer};
+use glam::{Vec2, Vec3};
 use std::borrow::Cow;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
@@ -12,9 +13,33 @@ use winit::{
 };
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+#[derive(Debug, Clone, Default, Copy, ShaderType, Pod, Zeroable)]
 struct Uniforms {
     pub screen_size: Vec2,
+}
+#[repr(C)]
+#[derive(Debug, Clone, Copy, ShaderType, Pod, Zeroable)]
+struct Scene {
+    pub spheres: [Sphere; 128],
+    pub sphere_count: u32,
+    pub padding: [u32; 3],
+}
+
+impl Default for Scene {
+    fn default() -> Self {
+        Self {
+            spheres: [Sphere::default(); 128],
+            sphere_count: 0,
+            padding: [0; 3],
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Default, Copy, ShaderType, Pod, Zeroable)]
+struct Sphere {
+    pub center: Vec3,
+    pub radius: f32,
 }
 
 async fn run(event_loop: EventLoop<()>, window: Window) {
@@ -47,6 +72,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         )
         .await
         .expect("Failed to create device");
+
     let mut uniforms = Uniforms {
         screen_size: Vec2::new(
             window.inner_size().width as f32,
@@ -81,6 +107,45 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             resource: uniforms_buffer.as_entire_binding(),
         }],
     });
+    let mut scene = Scene::default();
+    scene.spheres[0] = Sphere {
+        center: Vec3::ZERO,
+        radius: 0.5,
+    };
+    scene.spheres[1] = Sphere {
+        center: Vec3::new(0., -100.5, 0.),
+        radius: 100.0,
+    };
+    scene.sphere_count = 2;
+    println!("{:?}", scene);
+    let scene_buffer = device.create_buffer_init(&BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::bytes_of(&scene),
+        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+    });
+
+    let scene_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+            label: None,
+        });
+    let scene_bind_group = device.create_bind_group(&BindGroupDescriptor {
+        label: None,
+        layout: &scene_bind_group_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: scene_buffer.as_entire_binding(),
+        }],
+    });
 
     // Load the shaders from disk
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -90,7 +155,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: None,
-        bind_group_layouts: &[&uniforms_bind_group_layout],
+        bind_group_layouts: &[&uniforms_bind_group_layout, &scene_bind_group_layout],
         push_constant_ranges: &[],
     });
 
@@ -173,6 +238,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     });
                     rpass.set_pipeline(&render_pipeline);
                     rpass.set_bind_group(0, &uniforms_bind_group, &[]);
+                    rpass.set_bind_group(1, &scene_bind_group, &[]);
                     rpass.draw(0..3, 0..1);
                 }
 

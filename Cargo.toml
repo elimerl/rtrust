@@ -13,6 +13,7 @@ wgpu = "0.17.0"
 winit = "0.28.6"
 env_logger = "0.10.0"
 glam = { version = "0.24.1", features = ["bytemuck"] }
+encase = { version = "0.6.1", features = ["glam"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4.37"

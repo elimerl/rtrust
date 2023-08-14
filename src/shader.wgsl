@@ -1,8 +1,12 @@
 struct Uniforms {
-    screen_size: vec2<f32>
+    screen_size: vec2<f32>,
 };
-@group(0) @binding(0) // 1.
+@group(0) @binding(0) 
 var<uniform> uniforms: Uniforms;
+
+@group(1) @binding(0) 
+var<uniform> scene: Scene;
+
 
 var<private> a: array<vec4<f32>,3> = array(
   		vec4(-1., -1., 0., 1.),
@@ -18,11 +22,10 @@ fn vs_main(@builtin(vertex_index) in_vertex_index: u32) -> @builtin(position) ve
 
 @fragment
 fn fs_main(@builtin(position) in: vec4<f32>) -> @location(0) vec4<f32> {
-	let scene: Scene = Scene(array(Sphere(vec3<f32>(0.), 1.0)), 1);
 	let focal_length = 1.0;
     let viewport_height = 2.0;
     let viewport_width = viewport_height * (uniforms.screen_size.x/uniforms.screen_size.y);
-    let camera_center = vec3<f32>(0., 0., 0.);
+    let camera_center = vec3<f32>(0., 0., 3.);
 
     // Calculate the vectors across the horizontal and down the vertical viewport edges.
     let viewport_u = vec3<f32>(viewport_width, 0., 0.);
@@ -40,7 +43,7 @@ fn fs_main(@builtin(position) in: vec4<f32>) -> @location(0) vec4<f32> {
     let pixel_center = pixel00_loc + (in.x * pixel_delta_u) + (in.y * pixel_delta_v);
     let ray_direction = pixel_center - camera_center;
     let r = Ray(camera_center, ray_direction);
-    let pixel_color = ray_color(r);
+    let pixel_color = ray_color(r, in.xy * uniforms.screen_size.xy);
     return pow(vec4<f32>(pixel_color, 1.0), vec4(2.2));
 }
 
@@ -53,16 +56,30 @@ fn ray_at(ray: Ray, t: f32) -> vec3<f32> {
 	return ray.origin + t * ray.direction;
 }
 
-fn ray_color(ray: Ray, scene: Scene) -> vec3<f32> {
-	let rec = hit_scene(scene, 0.0, INFINITY);
-    if (rec_is_hit(rec.t))
-    {
-        return 0.5 * (rec.normal + vec3<f32>(1.0));
-	}
+fn ray_color(_ray: Ray, _rand_uv: vec2<f32>) -> vec3<f32> {
+	var ray = _ray;
+	var rand_uv = _rand_uv;
 
+	var iter = 0;
+	var color = vec3<f32>(0.0);
+	loop {
+		let rec = hit_scene(ray, 0.0, INFINITY);
+
+		if (rec_is_hit(rec))
+		{
+		    let direction = random_on_hemisphere(rand_uv, rec.normal);
+			ray = Ray(rec.p, direction);
+			rand_uv *= 2.4;
+			iter += 1;
+			continue;
+		}
+
+		break;
+	}
+	
 	let unit_direction = normalize(ray.direction);
 	let a = 0.5 * (unit_direction.y + 1.0);
-    return (1.0 - a) * vec3<f32>(1.0, 1.0, 1.0) + a * vec3<f32>(0.5, 0.7, 1.0);
+	return ((1.0 - a) * vec3<f32>(1.0, 1.0, 1.0) + a * vec3<f32>(0.5, 0.7, 1.0)) * (1.0/f32(iter));
 }
 
 fn hit_sphere(sphere: Sphere, r: Ray, ray_tmin: f32, ray_tmax: f32) -> HitRec {
@@ -71,26 +88,21 @@ fn hit_sphere(sphere: Sphere, r: Ray, ray_tmin: f32, ray_tmax: f32) -> HitRec {
     let half_b = dot(oc, r.direction);
     let c = length_squared(oc) - sphere.radius*sphere.radius;
     let discriminant = half_b*half_b - a*c;
-
-    if (discriminant < 0.0) {
-        return rec_no_hit();
-    } else {
-		let sqrtd = sqrt(discriminant);
-		var root = (-half_b - sqrtd) / a;
-        if (root <= ray_tmin || ray_tmax <= root) {
-            root = (-half_b + sqrtd) / a;
-            if (root <= ray_tmin || ray_tmax <= root)
-                {return rec_no_hit();}
-        }
-
-        let t = root;
-        let p = ray_at(r, t);
-        let outward_normal = (p - sphere.center) / sphere.radius;
-
-        let rec = HitRec(p, outward_normal, t, false);
-
-		return face_normal(rec, r, outward_normal);
+    if (discriminant < 0.0)
+        {return rec_no_hit();}
+    // Find the nearest root that lies in the acceptable range.
+    let sqrtd = sqrt(discriminant);
+    var root = (-half_b - sqrtd) / a;
+    if (root <= ray_tmin || ray_tmax <= root) {
+        root = (-half_b + sqrtd) / a;
+        if (root <= ray_tmin || ray_tmax <= root)
+            {return rec_no_hit();}
     }
+	var rec = rec_no_hit();
+    rec.t = root;
+    rec.p = ray_at(r, rec.t);
+    let outward_normal = (rec.p - sphere.center) / sphere.radius;
+    return face_normal(rec, r, outward_normal);
 }
 
 
@@ -129,7 +141,7 @@ struct Scene {
 	spheres_count: u32
 }
 
-fn hit_scene(scene: Scene, r: Ray, ray_tmin: f32, ray_tmax: f32) -> HitRec {
+fn hit_scene(r: Ray, ray_tmin: f32, ray_tmax: f32) -> HitRec {
 	var hit_anything = false;
 	var closest_so_far = ray_tmax;
 	var current_rec = rec_no_hit();
@@ -140,6 +152,7 @@ fn hit_scene(scene: Scene, r: Ray, ray_tmin: f32, ray_tmax: f32) -> HitRec {
 		if (rec_is_hit(rec)) {
 			hit_anything = true;
 			closest_so_far = rec.t;
+			current_rec = rec;
 		}
 	}
 
@@ -148,6 +161,42 @@ fn hit_scene(scene: Scene, r: Ray, ray_tmin: f32, ray_tmax: f32) -> HitRec {
 const INFINITY: f32 = 1e10;
 const PI: f32 = 3.1415926535897932385;
 
-fn deg2rad(deg: f32) {
+fn deg2rad(deg: f32) -> f32 {
 	return deg * PI / 180.0;
+}
+
+fn random(uv: vec2<f32>) -> f32 {
+    return fract(sin(dot(uv.xy,
+        vec2(12.9898,78.233))) * 43758.5453123);
+}
+
+fn random_float_in_range(uv: vec2<f32>, min: f32, max: f32) -> f32 {
+	return min + (max-min) * random(uv);
+}
+
+fn random_vec3(uv: vec2<f32>, min: f32, max: f32) -> vec3<f32> {
+	return vec3<f32>(random_float_in_range(uv * 12.4932, min, max), random_float_in_range(uv * 1.24512, min, max), random_float_in_range(uv * 0.02045, min, max));
+}
+
+fn random_point_in_unit_sphere(uv: vec2<f32>) -> vec3<f32> {
+	loop {
+		let p = random_vec3(uv, -1.0, 1.0);
+
+		if (length_squared(p) < 1.0) {
+			return p;
+		}
+	}
+	return vec3<f32>(0.0, 0.0, 0.0);
+}
+
+fn random_unit_vector(uv: vec2<f32>) -> vec3<f32> {
+	return normalize(random_point_in_unit_sphere(uv));
+}
+fn random_on_hemisphere(uv: vec2<f32>, normal: vec3<f32>) -> vec3<f32> {
+	let on_unit_sphere = random_unit_vector(uv);
+	if (dot(on_unit_sphere, normal) > 0.0) {
+		return on_unit_sphere;
+	} else {
+		return -on_unit_sphere;
+	}
 }
