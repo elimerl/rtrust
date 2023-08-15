@@ -1,12 +1,16 @@
 use bytemuck::{Pod, Zeroable};
 use encase::{ShaderType, UniformBuffer};
 use glam::{Vec2, Vec3};
-use std::borrow::Cow;
+use std::{
+    borrow::Cow,
+    time::{Duration, Instant},
+};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BindGroupDescriptor, BindGroupEntry, BufferUsages,
 };
 use winit::{
+    dpi::PhysicalSize,
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::Window,
@@ -16,6 +20,8 @@ use winit::{
 #[derive(Debug, Clone, Default, Copy, ShaderType, Pod, Zeroable)]
 struct Uniforms {
     pub screen_size: Vec2,
+    pub spp: u32,
+    pub frame: u32,
 }
 #[repr(C)]
 #[derive(Debug, Clone, Copy, ShaderType, Pod, Zeroable)]
@@ -78,6 +84,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             window.inner_size().width as f32,
             window.inner_size().height as f32,
         ),
+        spp: 1,
+        frame: 0,
     };
     let uniforms_buffer = device.create_buffer_init(&BufferInitDescriptor {
         label: None,
@@ -199,7 +207,9 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         // the resources are properly cleaned up.
         let _ = (&instance, &adapter, &shader, &pipeline_layout);
 
-        *control_flow = ControlFlow::Wait;
+        *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(16));
+        window.request_redraw();
+
         match event {
             Event::WindowEvent {
                 event: WindowEvent::Resized(size),
@@ -223,6 +233,10 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     .create_view(&wgpu::TextureViewDescriptor::default());
                 let mut encoder =
                     device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+                uniforms.frame += 1;
+                queue.write_buffer(&uniforms_buffer, 0, bytemuck::bytes_of(&uniforms));
+
                 {
                     let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: None,
@@ -230,7 +244,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                             view: &view,
                             resolve_target: None,
                             ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::GREEN),
+                                load: wgpu::LoadOp::Load,
                                 store: true,
                             },
                         })],
@@ -244,11 +258,15 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
                 queue.submit(Some(encoder.finish()));
                 frame.present();
+                println!("draw");
             }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..
             } => *control_flow = ControlFlow::Exit,
+            Event::MainEventsCleared => {
+                window.request_redraw();
+            }
             _ => {}
         }
     });
@@ -256,7 +274,10 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
 fn main() {
     let event_loop = EventLoop::new();
-    let window = winit::window::Window::new(&event_loop).unwrap();
+    let window = winit::window::WindowBuilder::new()
+        .with_inner_size(PhysicalSize::new(256, 256))
+        .build(&event_loop)
+        .unwrap();
     #[cfg(not(target_arch = "wasm32"))]
     {
         env_logger::init();

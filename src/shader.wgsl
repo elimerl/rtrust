@@ -1,5 +1,7 @@
 struct Uniforms {
     screen_size: vec2<f32>,
+	spp: u32,
+	frame: u32
 };
 @group(0) @binding(0) 
 var<uniform> uniforms: Uniforms;
@@ -40,16 +42,33 @@ fn fs_main(@builtin(position) in: vec4<f32>) -> @location(0) vec4<f32> {
                              - vec3<f32>(0., 0., focal_length) - viewport_u/2. - viewport_v/2.;
     let pixel00_loc = viewport_upper_left + 0.5 * (pixel_delta_u + pixel_delta_v);
 
-    let pixel_center = pixel00_loc + (in.x * pixel_delta_u) + (in.y * pixel_delta_v);
-    let ray_direction = pixel_center - camera_center;
+	var pixel_color = vec3<f32>(0.);
+	let pixel_center = pixel00_loc + (in.x * pixel_delta_u) + (in.y * pixel_delta_v);
+
+	let pixel_sample = pixel_center + pixel_sample_square(in.xy * uniforms.screen_size.xy / f32(uniforms.frame), pixel_delta_u, pixel_delta_v);
+    let ray_direction = pixel_sample - camera_center;
     let r = Ray(camera_center, ray_direction);
-    let pixel_color = ray_color(r, in.xy * uniforms.screen_size.xy);
-    return pow(vec4<f32>(pixel_color, 1.0), vec4(2.2));
+
+    pixel_color += ray_color(r, in.xy * uniforms.screen_size.xy * f32(uniforms.frame));
+
+// {		let pixel_sample = pixel_center + pixel_sample_square(in.xy * f32(3) * uniforms.screen_size.xy, pixel_delta_u, pixel_delta_v);
+//     	let ray_direction = pixel_sample - camera_center;
+//     	let r = Ray(camera_center, ray_direction);
+
+//     	pixel_color += ray_color(r, in.xy * f32(3) * uniforms.screen_size.xy);
+// }{
+// 		let pixel_sample = pixel_center + pixel_sample_square(in.xy * f32(4) * uniforms.screen_size.xy, pixel_delta_u, pixel_delta_v);
+//     	let ray_direction = pixel_sample - camera_center;
+//     	let r = Ray(camera_center, ray_direction);
+
+//     	pixel_color += ray_color(r, in.xy * f32(4) * uniforms.screen_size.xy);
+// 		}
+    return pow(vec4<f32>(pixel_color / 2.0, 0.1), vec4(2.2));
 }
 
 struct Ray {
 	origin: vec3<f32>,
-	direction: vec3<f32>	
+	direction: vec3<f32>
 };
 
 fn ray_at(ray: Ray, t: f32) -> vec3<f32> {
@@ -62,6 +81,7 @@ fn ray_color(_ray: Ray, _rand_uv: vec2<f32>) -> vec3<f32> {
 
 	var iter = 0;
 	var color = vec3<f32>(0.0);
+	var hit_anything = false;
 	loop {
 		let rec = hit_scene(ray, 0.0, INFINITY);
 
@@ -71,7 +91,12 @@ fn ray_color(_ray: Ray, _rand_uv: vec2<f32>) -> vec3<f32> {
 			ray = Ray(rec.p, direction);
 			rand_uv *= 2.4;
 			iter += 1;
+			hit_anything = true;
 			continue;
+		}
+
+		if (hit_anything) {
+			return color;
 		}
 
 		break;
@@ -199,4 +224,11 @@ fn random_on_hemisphere(uv: vec2<f32>, normal: vec3<f32>) -> vec3<f32> {
 	} else {
 		return -on_unit_sphere;
 	}
+}
+
+fn pixel_sample_square(uv: vec2<f32>, delta_u: vec3<f32>, delta_v: vec3<f32>) -> vec3<f32> {
+	let px = -0.5 + random(uv * 2.43);
+	let py = -0.5 + random(uv * 0.02);
+
+	return (px * delta_u) + (py * delta_v);
 }
